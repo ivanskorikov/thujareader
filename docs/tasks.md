@@ -6,11 +6,11 @@ Mark tasks as `[x]` when completed.
 
 ## Phase 1 – Project Setup and Architecture
 
-1. [ ] Initialize Go module layout with `cmd/thujareader` and `internal` packages (Plan: P1; Reqs: R1, R16)
-2. [ ] Add Bubble Tea and supporting TUI dependencies to `go.mod` (Plan: P1; Reqs: R1, R4, R16)
-3. [ ] Implement minimal `main` that starts a Bubble Tea program and exits cleanly (Plan: P1; Reqs: R1, R16)
-4. [ ] Define core domain structs for books, chapters/sections, and positions (Plan: P2; Reqs: R7, R8, R9, R10, R12, R18)
-5. [ ] Define bookmark and TOC entry types and interfaces (Plan: P2; Reqs: R9, R10, R12)
+1. [x] Initialize Go module layout with `cmd/thujareader` and `internal` packages (Plan: P1; Reqs: R1, R16)
+2. [x] Add Bubble Tea and supporting TUI dependencies to `go.mod` (Plan: P1; Reqs: R1, R4, R16)
+3. [x] Implement minimal `main` that starts a Bubble Tea program and exits cleanly (Plan: P1; Reqs: R1, R16)
+4. [x] Define core domain structs for books, chapters/sections, and positions (Plan: P2; Reqs: R7, R8, R9, R10, R12, R18)
+5. [x] Define bookmark and TOC entry types and interfaces (Plan: P2; Reqs: R9, R10, R12)
 
 ## Phase 2 – TUI Shell and DOS `edit.exe` Emulation
 
