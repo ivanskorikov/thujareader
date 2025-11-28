@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"thujareader/internal/reader"
 )
 
 // menuID identifies a top-level menu.
@@ -44,12 +46,23 @@ type menu struct {
 	items []menuItem
 }
 
-// Model holds UI state for the Phase 2 TUI shell emulating DOS edit.exe.
+// Model holds UI state for the TUI shell emulating DOS edit.exe.
 type Model struct {
 	width  int
 	height int
 
 	theme Theme
+
+	// unifiedReader is the shared entry point for loading books from
+	// disk. It is used both for CLI-argument opens and the in-app
+	// File → Open flow.
+	unifiedReader reader.UnifiedReader
+
+	// currentBook holds the last successfully loaded book, along with a
+	// pre-split view of its text for simple line-based rendering.
+	currentBook *reader.LoadedBook
+	lines       []string
+	topLine     int
 
 	menus       []menu
 	activeMenu  int  // index into menus, -1 when no menu is active
@@ -57,18 +70,34 @@ type Model struct {
 	menuOpen    bool // whether menu bar interaction is active
 	statusLine  string
 	statusDirty bool
+
+	// inputMode indicates that the UI is currently collecting a single
+	// line of text input from the user (e.g. for a file path).
+	inputMode   bool
+	inputPrompt string
+	inputBuffer []rune
+	// pendingCommand records which command should be executed when the
+	// current line input is confirmed (e.g. cmdOpen).
+	pendingCommand commandID
 }
 
-// NewModel constructs the initial UI model.
+// NewModel constructs the initial UI model without a pre-loaded book.
 func NewModel() Model {
+	return NewModelWithInitialBook(nil)
+}
+
+// NewModelWithInitialBook constructs the initial UI model, optionally
+// pre-populated with a book that was opened via CLI arguments.
+func NewModelWithInitialBook(book *reader.LoadedBook) Model {
 	m := Model{
 		// Start with a reasonable default size so that the UI can render
 		// even if no WindowSizeMsg is delivered (which can happen on some
 		// terminals, especially on Windows). Resize events will override
 		// these values when they arrive.
-		width:  80,
-		height: 25,
-		theme:  ThemeFromEnv(),
+		width:         80,
+		height:        25,
+		theme:         ThemeFromEnv(),
+		unifiedReader: reader.NewDefaultUnifiedReader(),
 		menus: []menu{
 			{
 				id:    menuFile,
@@ -112,6 +141,10 @@ func NewModel() Model {
 		statusLine: "Press F10 or Alt key combinations to open menus. F1 for Help.",
 	}
 
+	if book != nil {
+		m.setBook(*book)
+	}
+
 	return m
 }
 
@@ -134,6 +167,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Always allow Ctrl+C to quit.
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
+		}
+
+		// When we are in a simple input mode (e.g. entering a file path
+		// for the Open command), route all key presses through the input
+		// handler instead of the normal menu/keybinding logic.
+		if m.inputMode {
+			if m.handleInputKey(msg) {
+				return m, nil
+			}
+			return m, nil
 		}
 
 		if m.handleKey(msg) {
@@ -187,6 +230,21 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 	}
 
 	if !m.menuOpen {
+		// When the menu is not open, allow basic scrolling of the
+		// currently loaded book using arrow keys. More advanced
+		// navigation is handled in later phases.
+		switch msg.Type {
+		case tea.KeyUp:
+			if m.topLine > 0 {
+				m.topLine--
+			}
+			return true
+		case tea.KeyDown:
+			if m.currentBook != nil && m.topLine < len(m.lines)-1 {
+				m.topLine++
+			}
+			return true
+		}
 		return false
 	}
 
@@ -239,7 +297,20 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 func (m *Model) executeCommand(cmd commandID) {
 	switch cmd {
 	case cmdOpen:
-		m.setStatus("Open: not yet implemented (will open file dialog in later phase).")
+		// When invoking the Open command from the menu, close the menu so
+		// that, after opening a file, the main area can display the book
+		// contents instead of leaving the dropdown visible.
+		m.menuOpen = false
+		m.activeMenu = -1
+
+		// Enter a simple line-input mode where the user can type a file
+		// path to open. This is a minimal stand-in for a full file
+		// dialog and is sufficient for Phase 3.
+		m.inputMode = true
+		m.inputPrompt = "Open file: "
+		m.inputBuffer = m.inputBuffer[:0]
+		m.pendingCommand = cmdOpen
+		m.setStatus("Enter path to EPUB/FB2 file and press Enter.")
 	case cmdExit:
 		m.setStatus("Exit: press Alt+F then X or Ctrl+C to quit.")
 	case cmdFind:
@@ -260,6 +331,72 @@ func (m *Model) executeCommand(cmd commandID) {
 func (m *Model) setStatus(text string) {
 	m.statusLine = text
 	m.statusDirty = true
+}
+
+// setBook installs a newly loaded book into the model and prepares a
+// simple line-based view over its text.
+func (m *Model) setBook(book reader.LoadedBook) {
+	m.currentBook = &book
+	if book.Text != "" {
+		m.lines = strings.Split(book.Text, "\n")
+	} else {
+		m.lines = nil
+	}
+	m.topLine = 0
+}
+
+// openPath attempts to load the given file via the unified reader and
+// update the UI state accordingly.
+func (m *Model) openPath(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		m.setStatus("No file path provided.")
+		return
+	}
+
+	book, err := m.unifiedReader.Open(path)
+	if err != nil {
+		m.setStatus("Failed to open: " + err.Error())
+		return
+	}
+
+	m.setBook(book)
+	m.setStatus("Opened: " + book.Book.Title)
+}
+
+// handleInputKey processes key presses while the model is in a simple
+// line-input mode (used for the Open command in Phase 3).
+func (m *Model) handleInputKey(msg tea.KeyMsg) bool {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.inputMode = false
+		m.inputBuffer = nil
+		m.pendingCommand = cmdNone
+		return true
+	case tea.KeyEnter:
+		input := strings.TrimSpace(string(m.inputBuffer))
+		pending := m.pendingCommand
+		m.inputMode = false
+		m.inputBuffer = nil
+		m.pendingCommand = cmdNone
+
+		if pending == cmdOpen {
+			m.openPath(input)
+		}
+		return true
+	case tea.KeyBackspace:
+		if len(m.inputBuffer) > 0 {
+			m.inputBuffer = m.inputBuffer[:len(m.inputBuffer)-1]
+		}
+		return true
+	default:
+		if len(msg.Runes) > 0 {
+			m.inputBuffer = append(m.inputBuffer, msg.Runes...)
+			return true
+		}
+	}
+
+	return false
 }
 
 // View renders the full-screen layout with a menu bar, main area with
@@ -294,6 +431,7 @@ func (m Model) View() string {
 	for i := 0; i < innerHeight-1; i++ {
 		b.WriteRune(m.theme.borderVertical)
 
+		innerWidth := max(0, m.width-2)
 		// When a menu is open, render its items in the top lines of the
 		// main area so that selecting a menu visibly opens a dropdown.
 		if m.menuOpen && m.activeMenu >= 0 && m.activeMenu < len(m.menus) {
@@ -310,7 +448,6 @@ func (m Model) View() string {
 					line = " " + label
 				}
 
-				innerWidth := max(0, m.width-2)
 				if len(line) > innerWidth {
 					line = line[:innerWidth]
 				}
@@ -319,10 +456,36 @@ func (m Model) View() string {
 				}
 				b.WriteString(line)
 			} else {
-				b.WriteString(strings.Repeat(" ", max(0, m.width-2)))
+				b.WriteString(strings.Repeat(" ", innerWidth))
+			}
+		} else if m.inputMode && i == 0 {
+			// Show a simple one-line input prompt at the top of the main
+			// area when collecting a file path.
+			line := m.inputPrompt + string(m.inputBuffer)
+			if len(line) > innerWidth {
+				line = line[:innerWidth]
+			}
+			if len(line) < innerWidth {
+				line += strings.Repeat(" ", innerWidth-len(line))
+			}
+			b.WriteString(line)
+		} else if m.currentBook != nil {
+			// Render book text starting from topLine.
+			idx := m.topLine + i
+			if idx >= 0 && idx < len(m.lines) {
+				line := m.lines[idx]
+				if len(line) > innerWidth {
+					line = line[:innerWidth]
+				}
+				if len(line) < innerWidth {
+					line += strings.Repeat(" ", innerWidth-len(line))
+				}
+				b.WriteString(line)
+			} else {
+				b.WriteString(strings.Repeat(" ", innerWidth))
 			}
 		} else {
-			b.WriteString(strings.Repeat(" ", max(0, m.width-2)))
+			b.WriteString(strings.Repeat(" ", innerWidth))
 		}
 
 		b.WriteRune(m.theme.borderVertical)

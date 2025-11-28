@@ -66,11 +66,12 @@ Related Requirements: R2, R8, R9, R10, R11, R18
 
 **P8. Unified Reader Abstraction**  
 Priority: High  
-Related Requirements: R2, R7, R8, R9, R10, R11, R18
+Related Requirements: R2, R3, R7, R8, R9, R10, R11, R18
 
 - Define an interface for book loaders (EPUB, FB2) exposing a unified view of text, TOC, and metadata.
 - Implement adapters for EPUB and FB2 that satisfy this interface.
 - Implement error reporting channels for parsing and I/O problems.
+- Integrate the unified reader with both CLI-argument open and the in-app File → Open flow.
 
 ## 4. Core Reading Experience
 
@@ -155,3 +156,23 @@ Related Requirements: R4, R6, R14, R16
 
 - Document how to configure terminal fonts, colors, and sizes to best emulate DOS `edit.exe`.
 - Provide examples and notes on differences between platforms.
+
+## 8. Advanced Format Support
+
+**P19. Enhanced EPUB Support and Edge Cases**  
+Priority: Medium  
+Related Requirements: R2, R7, R9, R10, R11, R18
+
+- Extend the minimal EPUB parsing layer to handle a broader range of structures (multiple spine items, nested sections, complex TOCs).
+- Improve normalization of HTML/XHTML content, including better handling of inline formatting, links, and common block elements.
+- Optimize loading and memory behavior for large EPUBs, including incremental loading where feasible.
+- Add robust error handling and fallback strategies for malformed or unusual EPUB files.
+
+**P20. Enhanced FB2 Support and Edge Cases**  
+Priority: Medium  
+Related Requirements: R2, R8, R9, R10, R11, R18
+
+- Extend the minimal FB2 parsing layer to support more of the FB2 specification (notes, epigraphs, annotations, and nested sections).
+- Improve normalization rules so that complex FB2 structures map cleanly into the internal book and TOC models.
+- Optimize performance and memory usage for very large FB2 files.
+- Add robust error handling and fallback strategies for malformed or unusual FB2 documents.
