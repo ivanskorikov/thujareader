@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"os"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
+	"golang.org/x/term"
 
 	"thujareader/internal/reader"
 )
@@ -61,8 +65,29 @@ type Model struct {
 	// currentBook holds the last successfully loaded book, along with a
 	// pre-split view of its text for simple line-based rendering.
 	currentBook *reader.LoadedBook
+	// textRunes caches the book text as runes so that wrapping,
+	// navigation, and search can operate on rune offsets (matching the
+	// domain model's TotalCharacters semantics).
+	textRunes []rune
+	// lines holds the wrapped visual lines for the current viewport
+	// width; lineOffsets maps each visual line to its starting rune
+	// offset within the book's linear text.
 	lines       []string
+	lineOffsets []int
 	topLine     int
+
+	// currentPos tracks the logical position within the book. It is
+	// updated when scrolling or jumping so that status/location display
+	// can reflect the current chapter and percentage.
+	currentPos reader.Position
+
+	// TOC dialog state.
+	tocOpen  bool
+	tocIndex int
+
+	// Search state for Find / Find Next.
+	lastSearch       string
+	lastSearchOffset int // rune offset of last match start; -1 if none
 
 	menus       []menu
 	activeMenu  int  // index into menus, -1 when no menu is active
@@ -141,11 +166,39 @@ func NewModelWithInitialBook(book *reader.LoadedBook) Model {
 		statusLine: "Press F10 or Alt key combinations to open menus. F1 for Help.",
 	}
 
+	// Try to detect the actual terminal size at startup so that initial
+	// wrapping uses the full window width/height even on platforms where
+	// Bubble Tea may not immediately deliver a WindowSizeMsg.
+	if w, h, ok := detectTerminalSize(); ok {
+		if w > 0 {
+			m.width = w
+		}
+		if h > 0 {
+			m.height = h
+		}
+	}
+
 	if book != nil {
 		m.setBook(*book)
 	}
 
 	return m
+}
+
+// detectTerminalSize returns the current terminal width and height in
+// cells, if stdout is attached to a TTY and the size can be queried.
+// It is a best-effort helper used to initialize the model before any
+// WindowSizeMsg is received.
+func detectTerminalSize() (int, int, bool) {
+	fd := int(os.Stdout.Fd())
+	if !term.IsTerminal(fd) {
+		return 0, 0, false
+	}
+	w, h, err := term.GetSize(fd)
+	if err != nil || w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
 }
 
 // Init runs any startup commands. For now there are no asynchronous
@@ -161,6 +214,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Recompute wrapping when the window size changes so that text
+		// fits the new viewport width.
+		m.reflowWrappedLines()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -221,6 +277,15 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 	case tea.KeyF3:
 		m.executeCommand(cmdOpen)
 		return true
+	case tea.KeyF7:
+		// F7 either opens the Find dialog or, if a previous search term
+		// exists, jumps to the next match.
+		if !m.inputMode && m.lastSearch != "" {
+			m.performSearch(m.lastSearch, false)
+		} else {
+			m.executeCommand(cmdFind)
+		}
+		return true
 	}
 
 	// Alt+<letter> opens corresponding menu (e.g., Alt+F for File).
@@ -230,18 +295,96 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 	}
 
 	if !m.menuOpen {
-		// When the menu is not open, allow basic scrolling of the
-		// currently loaded book using arrow keys. More advanced
-		// navigation is handled in later phases.
+		// When the menu is not open, either handle TOC navigation when
+		// the TOC dialog is active or perform normal reading/view
+		// navigation.
+		if m.currentBook == nil {
+			return false
+		}
+
+		// TOC dialog navigation when open.
+		if m.tocOpen {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.tocOpen = false
+				return true
+			case tea.KeyUp:
+				if m.tocIndex > 0 {
+					m.tocIndex--
+				}
+				return true
+			case tea.KeyDown:
+				if m.currentBook != nil {
+					maxIdx := len(m.currentBook.TOC) - 1
+					if maxIdx >= 0 && m.tocIndex < maxIdx {
+						m.tocIndex++
+					}
+				}
+				return true
+			case tea.KeyEnter:
+				if m.currentBook != nil && m.tocIndex >= 0 && m.tocIndex < len(m.currentBook.TOC) {
+					entry := m.currentBook.TOC[m.tocIndex]
+					m.jumpToPosition(entry.Pos)
+				}
+				m.tocOpen = false
+				return true
+			}
+			return false
+		}
+
+		// Normal reading navigation when no modal dialog (like TOC) is
+		// active.
 		switch msg.Type {
 		case tea.KeyUp:
 			if m.topLine > 0 {
 				m.topLine--
+				m.updateCurrentPositionFromTopLine()
 			}
 			return true
 		case tea.KeyDown:
-			if m.currentBook != nil && m.topLine < len(m.lines)-1 {
+			if m.topLine < len(m.lines)-1 {
 				m.topLine++
+				m.updateCurrentPositionFromTopLine()
+			}
+			return true
+		case tea.KeyPgUp:
+			page := m.visibleLineCount()
+			if page <= 0 {
+				page = 1
+			}
+			if m.topLine > 0 {
+				m.topLine -= page
+				if m.topLine < 0 {
+					m.topLine = 0
+				}
+				m.updateCurrentPositionFromTopLine()
+			}
+			return true
+		case tea.KeyPgDown:
+			page := m.visibleLineCount()
+			if page <= 0 {
+				page = 1
+			}
+			maxTop := max(0, len(m.lines)-1)
+			if m.topLine < maxTop {
+				m.topLine += page
+				if m.topLine > maxTop {
+					m.topLine = maxTop
+				}
+				m.updateCurrentPositionFromTopLine()
+			}
+			return true
+		case tea.KeyHome:
+			if m.topLine != 0 {
+				m.topLine = 0
+				m.updateCurrentPositionFromTopLine()
+			}
+			return true
+		case tea.KeyEnd:
+			maxTop := max(0, len(m.lines)-1)
+			if m.topLine != maxTop {
+				m.topLine = maxTop
+				m.updateCurrentPositionFromTopLine()
 			}
 			return true
 		}
@@ -314,9 +457,24 @@ func (m *Model) executeCommand(cmd commandID) {
 	case cmdExit:
 		m.setStatus("Exit: press Alt+F then X or Ctrl+C to quit.")
 	case cmdFind:
-		m.setStatus("Find: not yet implemented (search dialog will appear in later phase).")
+		// Enter search input mode. Reuse the simple one-line input UI
+		// but distinguish via pendingCommand.
+		m.inputMode = true
+		m.inputPrompt = "Find: "
+		m.inputBuffer = m.inputBuffer[:0]
+		m.pendingCommand = cmdFind
+		m.setStatus("Enter search text and press Enter. Press Esc to cancel.")
 	case cmdToc:
-		m.setStatus("TOC: not yet implemented (table of contents view will appear in later phase).")
+		if m.currentBook == nil || len(m.currentBook.TOC) == 0 {
+			m.setStatus("TOC: no table of contents available for this book.")
+			return
+		}
+		// Open TOC dialog starting at first entry.
+		m.tocOpen = true
+		m.tocIndex = 0
+		m.menuOpen = false
+		m.activeMenu = -1
+		m.setStatus("TOC: Use ↑/↓ to select, Enter to jump, Esc to cancel.")
 	case cmdBookmarks:
 		m.setStatus("Bookmarks: not yet implemented (bookmark dialog will appear in later phase).")
 	case cmdRecentFiles:
@@ -334,15 +492,17 @@ func (m *Model) setStatus(text string) {
 }
 
 // setBook installs a newly loaded book into the model and prepares a
-// simple line-based view over its text.
+// wrapped view over its text based on the current viewport width.
 func (m *Model) setBook(book reader.LoadedBook) {
 	m.currentBook = &book
-	if book.Text != "" {
-		m.lines = strings.Split(book.Text, "\n")
-	} else {
-		m.lines = nil
-	}
+	m.textRunes = []rune(book.Text)
 	m.topLine = 0
+	m.currentPos = reader.Position{ChapterIndex: 0, OffsetInChapter: 0}
+	m.lastSearch = ""
+	m.lastSearchOffset = -1
+	m.tocIndex = 0
+	m.reflowWrappedLines()
+	m.updateCurrentPositionFromTopLine()
 }
 
 // openPath attempts to load the given file via the unified reader and
@@ -382,6 +542,8 @@ func (m *Model) handleInputKey(msg tea.KeyMsg) bool {
 
 		if pending == cmdOpen {
 			m.openPath(input)
+		} else if pending == cmdFind {
+			m.performSearch(input, true)
 		}
 		return true
 	case tea.KeyBackspace:
@@ -397,6 +559,214 @@ func (m *Model) handleInputKey(msg tea.KeyMsg) bool {
 	}
 
 	return false
+}
+
+// performSearch executes a simple forward substring search over the
+// book text. When newTerm is true, the previous search state is
+// reset; otherwise, the search continues from the last match
+// position. On success it jumps the viewport to the found position;
+// on failure it updates the status bar with an explanatory message.
+func (m *Model) performSearch(term string, newTerm bool) {
+	if m.currentBook == nil || len(term) == 0 {
+		m.setStatus("Find: empty search term.")
+		return
+	}
+
+	text := string(m.textRunes)
+	if newTerm || term != m.lastSearch {
+		m.lastSearch = term
+		m.lastSearchOffset = -1
+	}
+
+	start := m.lastSearchOffset + 1
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(text) {
+		m.setStatus("Find: no more matches.")
+		return
+	}
+
+	idx := strings.Index(text[start:], term)
+	if idx == -1 {
+		if m.lastSearchOffset == -1 {
+			m.setStatus("Find: no matches.")
+		} else {
+			m.setStatus("Find: no more matches.")
+		}
+		return
+	}
+
+	matchOffset := start + idx
+	m.lastSearchOffset = matchOffset
+	pos := m.absoluteOffsetToPosition(matchOffset)
+	m.jumpToPosition(pos)
+	m.setStatus("Find: match found.")
+}
+
+// reflowWrappedLines recomputes wrapped lines and their rune offsets
+// based on the current window width.
+func (m *Model) reflowWrappedLines() {
+	if m.currentBook == nil || len(m.textRunes) == 0 {
+		m.lines = nil
+		m.lineOffsets = nil
+		m.topLine = 0
+		return
+	}
+
+	innerWidth := max(0, m.width-2)
+	if innerWidth <= 0 {
+		m.lines = nil
+		m.lineOffsets = nil
+		m.topLine = 0
+		return
+	}
+
+	lines := make([]string, 0, len(m.textRunes)/innerWidth+1)
+	offsets := make([]int, 0, len(lines))
+
+	var (
+		lineRunes       []rune
+		col             int // display width in cells
+		lineStartOffset int
+	)
+
+	flushLine := func() {
+		lines = append(lines, string(lineRunes))
+		offsets = append(offsets, lineStartOffset)
+		lineRunes = lineRunes[:0]
+		col = 0
+		lineStartOffset = 0
+	}
+
+	currentOffset := 0
+	for _, r := range m.textRunes {
+		if r == '\n' {
+			// End current visual line on explicit newline.
+			flushLine()
+			currentOffset++
+			lineStartOffset = currentOffset
+			continue
+		}
+
+		rw := runewidth.RuneWidth(r)
+		if rw <= 0 {
+			rw = 1
+		}
+
+		// If adding this rune would exceed the inner width, flush the
+		// current line and start a new one at this rune offset.
+		if col > 0 && col+rw > innerWidth {
+			flushLine()
+			lineStartOffset = currentOffset
+		}
+
+		lineRunes = append(lineRunes, r)
+		col += rw
+		currentOffset++
+	}
+
+	// Flush any remaining runes as the last line.
+	if len(lineRunes) > 0 {
+		flushLine()
+	}
+
+	m.lines = lines
+	m.lineOffsets = offsets
+	if m.topLine >= len(m.lines) {
+		m.topLine = max(0, len(m.lines)-1)
+	}
+}
+
+// visibleLineCount returns how many text lines fit inside the bordered
+// main area.
+func (m Model) visibleLineCount() int {
+	innerHeight := m.height - 3
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+	// One line is used by the bottom border; the remaining lines are
+	// available for content.
+	return max(0, innerHeight-1)
+}
+
+// updateCurrentPositionFromTopLine updates the logical Position based
+// on the current topLine and lineOffsets mapping.
+func (m *Model) updateCurrentPositionFromTopLine() {
+	if m.currentBook == nil || len(m.lineOffsets) == 0 {
+		m.currentPos = reader.Position{}
+		return
+	}
+	idx := m.topLine
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(m.lineOffsets) {
+		idx = len(m.lineOffsets) - 1
+	}
+	abs := m.lineOffsets[idx]
+	m.currentPos = m.absoluteOffsetToPosition(abs)
+}
+
+// jumpToPosition moves the viewport so that the given logical
+// Position becomes visible near the top of the screen.
+func (m *Model) jumpToPosition(pos reader.Position) {
+	if m.currentBook == nil || len(m.lineOffsets) == 0 {
+		return
+	}
+	abs := m.positionToAbsoluteOffset(pos)
+	// Find the first visual line whose starting offset is at or after
+	// the target offset.
+	line := 0
+	for i, off := range m.lineOffsets {
+		if off >= abs {
+			line = i
+			break
+		}
+	}
+	m.topLine = line
+	m.updateCurrentPositionFromTopLine()
+}
+
+// positionToAbsoluteOffset converts a logical Position into a rune
+// offset within the book's linear text stream.
+func (m Model) positionToAbsoluteOffset(pos reader.Position) int {
+	if m.currentBook == nil {
+		return 0
+	}
+	if pos.ChapterIndex < 0 || pos.ChapterIndex >= len(m.currentBook.Book.Chapters) {
+		return 0
+	}
+	ch := m.currentBook.Book.Chapters[pos.ChapterIndex]
+	return ch.Offset + pos.OffsetInChapter
+}
+
+// absoluteOffsetToPosition converts a rune offset into a logical
+// Position by finding the containing chapter and offset within it.
+func (m Model) absoluteOffsetToPosition(offset int) reader.Position {
+	if m.currentBook == nil || offset <= 0 {
+		return reader.Position{}
+	}
+	chapters := m.currentBook.Book.Chapters
+	if len(chapters) == 0 {
+		return reader.Position{}
+	}
+	chapterIndex := 0
+	for i, ch := range chapters {
+		if offset < ch.Offset+ch.Length {
+			chapterIndex = i
+			break
+		}
+	}
+	ch := chapters[chapterIndex]
+	if offset < ch.Offset {
+		offset = ch.Offset
+	}
+	offsetInChapter := offset - ch.Offset
+	if offsetInChapter < 0 {
+		offsetInChapter = 0
+	}
+	return reader.Position{ChapterIndex: chapterIndex, OffsetInChapter: offsetInChapter}
 }
 
 // View renders the full-screen layout with a menu bar, main area with
@@ -448,13 +818,7 @@ func (m Model) View() string {
 					line = " " + label
 				}
 
-				if len(line) > innerWidth {
-					line = line[:innerWidth]
-				}
-				if len(line) < innerWidth {
-					line += strings.Repeat(" ", innerWidth-len(line))
-				}
-				b.WriteString(line)
+				b.WriteString(padOrTrim(line, innerWidth))
 			} else {
 				b.WriteString(strings.Repeat(" ", innerWidth))
 			}
@@ -462,25 +826,29 @@ func (m Model) View() string {
 			// Show a simple one-line input prompt at the top of the main
 			// area when collecting a file path.
 			line := m.inputPrompt + string(m.inputBuffer)
-			if len(line) > innerWidth {
-				line = line[:innerWidth]
+			b.WriteString(padOrTrim(line, innerWidth))
+		} else if m.tocOpen && m.currentBook != nil {
+			// Render a simple TOC dialog: list of entries with the
+			// currently selected one highlighted.
+			idx := i
+			if idx >= 0 && idx < len(m.currentBook.TOC) {
+				entry := m.currentBook.TOC[idx]
+				label := entry.Label
+				if idx == m.tocIndex {
+					label = "> " + label
+				} else {
+					label = "  " + label
+				}
+				b.WriteString(padOrTrim(label, innerWidth))
+			} else {
+				b.WriteString(strings.Repeat(" ", innerWidth))
 			}
-			if len(line) < innerWidth {
-				line += strings.Repeat(" ", innerWidth-len(line))
-			}
-			b.WriteString(line)
 		} else if m.currentBook != nil {
-			// Render book text starting from topLine.
+			// Render wrapped book text starting from topLine.
 			idx := m.topLine + i
 			if idx >= 0 && idx < len(m.lines) {
 				line := m.lines[idx]
-				if len(line) > innerWidth {
-					line = line[:innerWidth]
-				}
-				if len(line) < innerWidth {
-					line += strings.Repeat(" ", innerWidth-len(line))
-				}
-				b.WriteString(line)
+				b.WriteString(padOrTrim(line, innerWidth))
 			} else {
 				b.WriteString(strings.Repeat(" ", innerWidth))
 			}
@@ -512,24 +880,66 @@ func (m Model) renderMenuBar() string {
 		}
 	}
 	line := strings.Join(segments, "")
-	if len(line) > m.width {
-		return line[:m.width]
-	}
-	if len(line) < m.width {
-		line += strings.Repeat(" ", m.width-len(line))
-	}
-	return line
+	return padOrTrim(line, m.width)
 }
 
 func (m Model) renderStatusBar() string {
 	text := m.statusLine
-	if len(text) > m.width {
-		text = text[:m.width]
+	location := ""
+	if m.currentBook != nil && len(m.currentBook.Book.Chapters) > 0 {
+		// Compute approximate progress percentage based on
+		// TotalCharacters and current position.
+		book := m.currentBook.Book
+		if book.TotalCharacters > 0 {
+			abs := m.positionToAbsoluteOffset(m.currentPos)
+			if abs < 0 {
+				abs = 0
+			}
+			if abs > book.TotalCharacters {
+				abs = book.TotalCharacters
+			}
+			percent := (abs * 100) / book.TotalCharacters
+			chapterIndex := m.currentPos.ChapterIndex
+			chapterLabel := ""
+			if chapterIndex >= 0 && chapterIndex < len(book.Chapters) {
+				ch := book.Chapters[chapterIndex]
+				if strings.TrimSpace(ch.Title) != "" {
+					chapterLabel = ch.Title
+				} else {
+					chapterLabel = "Chapter " + itoa(chapterIndex+1)
+				}
+			}
+			if chapterLabel != "" {
+				location = chapterLabel + " "
+			}
+			location += itoa(percent) + "%"
+		}
 	}
-	if len(text) < m.width {
-		text += strings.Repeat(" ", m.width-len(text))
+
+	if location != "" {
+		// Place location info at the right edge, trimming or padding the
+		// main status text as needed. All widths are rune/column-aware.
+		locWidth := runewidth.StringWidth(location)
+		if locWidth > m.width {
+			location = runewidth.Truncate(location, m.width, "")
+			locWidth = runewidth.StringWidth(location)
+		}
+		available := m.width - locWidth - 1
+		if available < 0 {
+			available = 0
+		}
+		text = padOrTrim(text, available)
+		text += " " + location
+	} else {
+		text = padOrTrim(text, m.width)
 	}
+
 	return text
+}
+
+// itoa is a small helper for integer-to-string conversion.
+func itoa(i int) string {
+	return strconv.Itoa(i)
 }
 
 func max(a, b int) int {
@@ -537,4 +947,22 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// padOrTrim returns a version of s whose printable width (in terminal
+// cells) is exactly width, using runewidth to account for multi-byte
+// and wide runes. If s is wider, it is truncated; if it is narrower,
+// it is padded with spaces on the right.
+func padOrTrim(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	w := runewidth.StringWidth(s)
+	if w > width {
+		return runewidth.Truncate(s, width, "")
+	}
+	if w < width {
+		return s + strings.Repeat(" ", width-w)
+	}
+	return s
 }

@@ -37,14 +37,14 @@ Mark tasks as `[x]` when completed.
 
 ## Phase 4 – Core Reading Experience
 
-23. [ ] Implement text wrapping based on current terminal width and height (Plan: P9; Reqs: R4, R6, R7, R8, R9, R18)
-24. [ ] Implement scrolling behavior (line, page up/down) matching `edit.exe` semantics (Plan: P9; Reqs: R5, R9, R18)
-25. [ ] Integrate navigation model so scroll commands update and consume positions (Plan: P9; Reqs: R9)
-26. [ ] Implement TOC dialog and allow jumping to selected entries (Plan: P10; Reqs: R9, R10)
-27. [ ] Display current location (chapter, percentage) in the status bar (Plan: P10; Reqs: R9, R10)
-28. [ ] Implement Find dialog styled like `edit.exe` (Plan: P11; Reqs: R11)
-29. [ ] Implement text search over normalized content with find-next behavior (Plan: P11; Reqs: R11, R18)
-30. [ ] Show user feedback when no more matches are found (Plan: P11; Reqs: R11)
+23. [x] Implement text wrapping based on current terminal width and height (Plan: P9; Reqs: R4, R6, R7, R8, R9, R18)
+24. [x] Implement scrolling behavior (line, page up/down) matching `edit.exe` semantics (Plan: P9; Reqs: R5, R9, R18)
+25. [x] Integrate navigation model so scroll commands update and consume positions (Plan: P9; Reqs: R9)
+26. [x] Implement TOC dialog and allow jumping to selected entries (Plan: P10; Reqs: R9, R10)
+27. [x] Display current location (chapter, percentage) in the status bar (Plan: P10; Reqs: R9, R10)
+28. [x] Implement Find dialog styled like `edit.exe` (Plan: P11; Reqs: R11)
+29. [x] Implement text search over normalized content with find-next behavior (Plan: P11; Reqs: R11, R18)
+30. [x] Show user feedback when no more matches are found (Plan: P11; Reqs: R11)
 
 ## Phase 5 – Persistence and Advanced Features
 
