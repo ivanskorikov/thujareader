@@ -37,7 +37,7 @@ Mark tasks as `[x]` when completed.
 
 ## Phase 4 – Core Reading Experience
 
-23. [x] Implement text wrapping based on current terminal width and height (Plan: P9; Reqs: R4, R6, R7, R8, R9, R18)
+23. [x] Implement text wrapping based on current terminal width and height (Plan: P9; Reqs: R4, R6, R7, R8, R9, R18, R19)
 24. [x] Implement scrolling behavior (line, page up/down) matching `edit.exe` semantics (Plan: P9; Reqs: R5, R9, R18)
 25. [x] Integrate navigation model so scroll commands update and consume positions (Plan: P9; Reqs: R9)
 26. [x] Implement TOC dialog and allow jumping to selected entries (Plan: P10; Reqs: R9, R10)
@@ -82,3 +82,5 @@ Mark tasks as `[x]` when completed.
 
 54. [ ] Extend EPUB parsing to support complex structures and edge cases (Plan: P19; Reqs: R2, R7, R9, R10, R11, R18)
 55. [ ] Extend FB2 parsing to support complex structures and edge cases (Plan: P20; Reqs: R2, R8, R9, R10, R11, R18)
+56. [ ] Implement optional word hyphenation for long words in wrapped text (Plan: P9; Reqs: R20)
+57. [ ] Implement optional text justification mode with safe fallbacks (Plan: P9, P18; Reqs: R6, R19, R21)

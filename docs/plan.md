@@ -77,11 +77,13 @@ Related Requirements: R2, R3, R7, R8, R9, R10, R11, R18
 
 **P9. Text Rendering and Scrolling**  
 Priority: High  
-Related Requirements: R4, R5, R6, R7, R8, R9, R18
+Related Requirements: R4, R5, R6, R7, R8, R9, R18, R19, R20, R21
 
 - Implement line wrapping and pagination respecting terminal width and height.
 - Implement smooth scrolling behavior matching `edit.exe` semantics.
 - Integrate the navigation model so that scroll operations update and consume positions.
+- Ensure wrapping, padding, and borders use Unicode-aware cell widths so that Cyrillic and other non-Latin scripts render without misalignment.
+- Explore optional hyphenation and text justification modes for supported terminals, controlled via configuration and with safe fallbacks to left-aligned wrapping.
 
 **P10. Navigation, TOC, and Section Jumping**  
 Priority: Medium  
@@ -152,10 +154,11 @@ Related Requirements: R5, R17
 
 **P18. User Documentation and Terminal Setup Guide**  
 Priority: Low  
-Related Requirements: R4, R6, R14, R16
+Related Requirements: R4, R6, R14, R16, R19, R20, R21
 
 - Document how to configure terminal fonts, colors, and sizes to best emulate DOS `edit.exe`.
 - Provide examples and notes on differences between platforms.
+- Describe recommended terminal settings and known limitations for Cyrillic and other Unicode scripts, including how wrapping, hyphenation, and justification behave.
 
 ## 8. Advanced Format Support
 

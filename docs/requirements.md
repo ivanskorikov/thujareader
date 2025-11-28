@@ -116,7 +116,28 @@
       - WHEN the user closes the help screen THEN the system SHALL return to the previous view without losing reading position.
 
 18. **R18 – Performance on Large Books**
-    - **User Story**: As a user, I want smooth scrolling even in large books so that reading is comfortable.
-    - **Acceptance Criteria**:
-      - WHEN the user opens a large EPUB or FB2 (e.g., several MBs, thousands of pages) THEN the system SHALL remain responsive and scroll without noticeable freezes.
-      - WHEN memory usage would become excessive for extremely large books THEN the system SHALL use streaming or chunked loading strategies to remain stable.
+   - **User Story**: As a user, I want smooth scrolling even in large books so that reading is comfortable.
+   - **Acceptance Criteria**:
+     - WHEN the user opens a large EPUB or FB2 (e.g., several MBs, thousands of pages) THEN the system SHALL remain responsive and scroll without noticeable freezes.
+     - WHEN memory usage would become excessive for extremely large books THEN the system SHALL use streaming or chunked loading strategies to remain stable.
+
+19. **R19 – Cyrillic and Unicode Text Rendering**
+   - **User Story**: As a user reading books in Cyrillic or other non-Latin scripts, I want the text and borders to align correctly so that the layout remains readable and consistent.
+   - **Acceptance Criteria**:
+     - WHEN the user opens a book containing Cyrillic characters THEN the system SHALL render text and pseudo-graphics borders without misalignment or truncation caused by character width.
+     - WHEN the terminal uses a Unicode-capable monospaced font THEN the system SHALL compute wrapping and padding using Unicode-aware cell width rather than raw byte or rune counts.
+     - WHEN documenting usage THEN the system SHALL mention any known limitations or required terminal settings for correct rendering of Cyrillic and other non-Latin scripts.
+
+20. **R20 – Word Hyphenation**
+   - **User Story**: As a user, I want long words to be hyphenated sensibly at line breaks so that text remains readable without excessive raggedness or large gaps.
+   - **Acceptance Criteria**:
+     - WHEN a line exceeds the available width due to a long word THEN the system SHOULD apply language-appropriate or heuristic hyphenation rules to break the word with a hyphen instead of forcing it entirely onto the next line, where technically feasible.
+     - WHEN hyphenation is enabled THEN the system SHALL ensure that wrapped lines do not exceed the terminal width and that added hyphens are visually evident to the reader.
+     - WHEN hyphenation cannot be applied reliably for a given language or terminal configuration THEN the system MAY fall back to simple wrapping without hyphenation, while keeping layout stable.
+
+21. **R21 – Text Justification in Terminal**
+   - **User Story**: As a user, I want an option for justified text so that paragraphs align neatly on both left and right margins when the terminal permits.
+   - **Acceptance Criteria**:
+     - WHEN the user enables justification in configuration or via a future UI option THEN the system SHALL distribute extra spaces between words so that most lines in a paragraph align with both left and right borders, subject to terminal font and width constraints.
+     - WHEN justification is not technically feasible or would produce severe visual artifacts in the current terminal/font THEN the system SHALL fall back to left-aligned text while preserving correct wrapping and alignment of borders.
+     - WHEN justification is enabled THEN the system SHALL avoid distorting inline spacing within words and SHALL only adjust inter-word spacing.
