@@ -35,6 +35,8 @@ const (
 	cmdBookmarks
 	cmdRecentFiles
 	cmdHelp
+	cmdAddBookmark
+	cmdDeleteBookmark
 )
 
 // menuItem is a single item within a menu.
@@ -84,6 +86,17 @@ type Model struct {
 	// TOC dialog state.
 	tocOpen  bool
 	tocIndex int
+
+	// Bookmarks dialog state and in-memory storage.
+	bookmarks     map[reader.BookID][]reader.Bookmark
+	bookmarksOpen bool
+	bookmarkIndex int
+
+	// Recent files list and dialog state.
+	recentFiles []string
+	recentOpen  bool
+	recentIndex int
+	recentLimit int
 
 	// Search state for Find / Find Next.
 	lastSearch       string
@@ -151,6 +164,8 @@ func NewModelWithInitialBook(book *reader.LoadedBook) Model {
 				label: "Bookmarks",
 				items: []menuItem{
 					{label: "Manage Bookmarks", command: cmdBookmarks},
+					{label: "Add Bookmark  F2", command: cmdAddBookmark},
+					{label: "Delete Bookmark", command: cmdDeleteBookmark},
 				},
 			},
 			{
@@ -161,9 +176,11 @@ func NewModelWithInitialBook(book *reader.LoadedBook) Model {
 				},
 			},
 		},
-		activeMenu: -1,
-		activeItem: 0,
-		statusLine: "Press F10 or Alt key combinations to open menus. F1 for Help.",
+		activeMenu:  -1,
+		activeItem:  0,
+		statusLine:  "Press F10 or Alt key combinations to open menus. F1 for Help.",
+		bookmarks:   make(map[reader.BookID][]reader.Bookmark),
+		recentLimit: 10,
 	}
 
 	// Try to detect the actual terminal size at startup so that initial
@@ -182,6 +199,17 @@ func NewModelWithInitialBook(book *reader.LoadedBook) Model {
 		m.setBook(*book)
 	}
 
+	return m
+}
+
+// NewModelWithInitialBookAndBookmarks constructs the initial UI model
+// and pre-populates it with a book (if any) and a set of bookmarks
+// loaded from persisted state.
+func NewModelWithInitialBookAndBookmarks(book *reader.LoadedBook, bookmarks map[reader.BookID][]reader.Bookmark) Model {
+	m := NewModelWithInitialBook(book)
+	if bookmarks != nil {
+		m.bookmarks = bookmarks
+	}
 	return m
 }
 
@@ -274,6 +302,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 	case tea.KeyF1:
 		m.executeCommand(cmdHelp)
 		return true
+	case tea.KeyF2:
+		// F2: add bookmark at current position.
+		m.executeCommand(cmdAddBookmark)
+		return true
 	case tea.KeyF3:
 		m.executeCommand(cmdOpen)
 		return true
@@ -327,6 +359,81 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 					m.jumpToPosition(entry.Pos)
 				}
 				m.tocOpen = false
+				return true
+			}
+			return false
+		}
+
+		// Bookmarks dialog navigation when open.
+		if m.bookmarksOpen {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.bookmarksOpen = false
+				return true
+			case tea.KeyUp:
+				if m.bookmarkIndex > 0 {
+					m.bookmarkIndex--
+				}
+				return true
+			case tea.KeyDown:
+				current := m.currentBookmarks()
+				if len(current) == 0 {
+					return true
+				}
+				if m.bookmarkIndex < len(current)-1 {
+					m.bookmarkIndex++
+				}
+				return true
+			case tea.KeyEnter:
+				current := m.currentBookmarks()
+				if len(current) == 0 {
+					m.bookmarksOpen = false
+					return true
+				}
+				if m.bookmarkIndex < 0 || m.bookmarkIndex >= len(current) {
+					m.bookmarksOpen = false
+					return true
+				}
+				bm := current[m.bookmarkIndex]
+				m.jumpToPosition(bm.Pos)
+				m.bookmarksOpen = false
+				m.setStatus("Jumped to bookmark: " + bm.Name)
+				return true
+			}
+			return false
+		}
+
+		// Recent files dialog navigation when open.
+		if m.recentOpen {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.recentOpen = false
+				return true
+			case tea.KeyUp:
+				if m.recentIndex > 0 {
+					m.recentIndex--
+				}
+				return true
+			case tea.KeyDown:
+				if len(m.recentFiles) == 0 {
+					return true
+				}
+				if m.recentIndex < len(m.recentFiles)-1 {
+					m.recentIndex++
+				}
+				return true
+			case tea.KeyEnter:
+				if len(m.recentFiles) == 0 {
+					m.recentOpen = false
+					return true
+				}
+				if m.recentIndex < 0 || m.recentIndex >= len(m.recentFiles) {
+					m.recentOpen = false
+					return true
+				}
+				path := m.recentFiles[m.recentIndex]
+				m.recentOpen = false
+				m.openPath(path)
 				return true
 			}
 			return false
@@ -476,9 +583,63 @@ func (m *Model) executeCommand(cmd commandID) {
 		m.activeMenu = -1
 		m.setStatus("TOC: Use ↑/↓ to select, Enter to jump, Esc to cancel.")
 	case cmdBookmarks:
-		m.setStatus("Bookmarks: not yet implemented (bookmark dialog will appear in later phase).")
+		if m.currentBook == nil {
+			m.setStatus("Bookmarks: no book is currently open.")
+			return
+		}
+		current := m.currentBookmarks()
+		if len(current) == 0 {
+			m.setStatus("Bookmarks: no bookmarks for this book.")
+			return
+		}
+		m.bookmarksOpen = true
+		m.bookmarkIndex = 0
+		m.menuOpen = false
+		m.activeMenu = -1
+		m.setStatus("Bookmarks: Use ↑/↓ to select, Enter to jump, Esc to cancel.")
+	case cmdAddBookmark:
+		if m.currentBook == nil {
+			m.setStatus("Cannot add bookmark: no book is open.")
+			return
+		}
+		name := "Bookmark " + itoa(len(m.currentBookmarks())+1)
+		bm := reader.Bookmark{
+			Name:   name,
+			BookID: m.currentBook.Book.ID,
+			Pos:    m.currentPos,
+		}
+		list := m.currentBookmarks()
+		list = append(list, bm)
+		if m.bookmarks == nil {
+			m.bookmarks = make(map[reader.BookID][]reader.Bookmark)
+		}
+		m.bookmarks[m.currentBook.Book.ID] = list
+		m.setStatus("Added bookmark: " + name)
+	case cmdDeleteBookmark:
+		if !m.bookmarksOpen || m.currentBook == nil {
+			return
+		}
+		current := m.currentBookmarks()
+		if len(current) == 0 || m.bookmarkIndex < 0 || m.bookmarkIndex >= len(current) {
+			return
+		}
+		name := current[m.bookmarkIndex].Name
+		current = append(current[:m.bookmarkIndex], current[m.bookmarkIndex+1:]...)
+		m.bookmarks[m.currentBook.Book.ID] = current
+		if m.bookmarkIndex >= len(current) && m.bookmarkIndex > 0 {
+			m.bookmarkIndex--
+		}
+		m.setStatus("Deleted bookmark: " + name)
 	case cmdRecentFiles:
-		m.setStatus("Recent files: not yet implemented (recent list will appear in later phase).")
+		if len(m.recentFiles) == 0 {
+			m.setStatus("Recent files: list is empty.")
+			return
+		}
+		m.recentOpen = true
+		m.recentIndex = 0
+		m.menuOpen = false
+		m.activeMenu = -1
+		m.setStatus("Recent files: Use ↑/↓ to select, Enter to open, Esc to cancel.")
 	case cmdHelp:
 		m.setStatus("Help: not yet implemented (help screen will appear in later phase).")
 	default:
@@ -486,9 +647,51 @@ func (m *Model) executeCommand(cmd commandID) {
 	}
 }
 
+// currentBookmarks returns the slice of bookmarks for the currently
+// open book. It never returns nil; when no book is open or there are no
+// bookmarks for the book it returns an empty slice.
+func (m *Model) currentBookmarks() []reader.Bookmark {
+	if m.currentBook == nil {
+		return nil
+	}
+	if m.bookmarks == nil {
+		return nil
+	}
+	list, ok := m.bookmarks[m.currentBook.Book.ID]
+	if !ok {
+		return nil
+	}
+	return list
+}
+
 func (m *Model) setStatus(text string) {
 	m.statusLine = text
 	m.statusDirty = true
+}
+
+// SetRecentLimit updates the maximum number of recent files remembered
+// in memory. Non-positive values are ignored.
+func (m *Model) SetRecentLimit(limit int) {
+	if limit <= 0 {
+		return
+	}
+	m.recentLimit = limit
+}
+
+// ExportBookmarks returns a copy of the in-memory bookmarks map so that
+// callers (e.g. main) can persist it to disk without mutating internal
+// state.
+func (m Model) ExportBookmarks() map[reader.BookID][]reader.Bookmark {
+	if m.bookmarks == nil {
+		return map[reader.BookID][]reader.Bookmark{}
+	}
+	out := make(map[reader.BookID][]reader.Bookmark, len(m.bookmarks))
+	for k, v := range m.bookmarks {
+		copySlice := make([]reader.Bookmark, len(v))
+		copy(copySlice, v)
+		out[k] = copySlice
+	}
+	return out
 }
 
 // setBook installs a newly loaded book into the model and prepares a
@@ -835,6 +1038,23 @@ func (m Model) View() string {
 				entry := m.currentBook.TOC[idx]
 				label := entry.Label
 				if idx == m.tocIndex {
+					label = "> " + label
+				} else {
+					label = "  " + label
+				}
+				b.WriteString(padOrTrim(label, innerWidth))
+			} else {
+				b.WriteString(strings.Repeat(" ", innerWidth))
+			}
+		} else if m.bookmarksOpen && m.currentBook != nil {
+			// Render a simple bookmarks dialog: list of bookmark names with
+			// the currently selected one highlighted.
+			list := m.currentBookmarks()
+			idx := i
+			if idx >= 0 && idx < len(list) {
+				entry := list[idx]
+				label := entry.Name
+				if idx == m.bookmarkIndex {
 					label = "> " + label
 				} else {
 					label = "  " + label

@@ -141,3 +141,10 @@
      - WHEN the user enables justification in configuration or via a future UI option THEN the system SHALL distribute extra spaces between words so that most lines in a paragraph align with both left and right borders, subject to terminal font and width constraints.
      - WHEN justification is not technically feasible or would produce severe visual artifacts in the current terminal/font THEN the system SHALL fall back to left-aligned text while preserving correct wrapping and alignment of borders.
      - WHEN justification is enabled THEN the system SHALL avoid distorting inline spacing within words and SHALL only adjust inter-word spacing.
+
+22. **R22 – Persistent Identity Across Renames and Moves**
+   - **User Story**: As a user, I want my bookmarks and last reading position to survive simple file renames or moves so that reorganizing my library does not silently discard my progress.
+   - **Acceptance Criteria**:
+     - WHEN a book file is renamed or moved within the user’s library locations THEN the system SHOULD attempt to match it to an existing persisted identity (e.g., via metadata or hashing) and reuse its bookmarks and last position.
+     - WHEN multiple candidate files could match the same previous identity THEN the system MAY choose the most likely match or fall back to treating them as distinct books, but it SHALL avoid corrupting or merging unrelated bookmark sets.
+     - WHEN no safe match can be found for a moved/renamed file THEN the system SHALL treat it as a new book while keeping the old book’s persisted data intact for possible future reuse.
