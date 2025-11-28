@@ -14,15 +14,15 @@ Mark tasks as `[x]` when completed.
 
 ## Phase 2 – TUI Shell and DOS `edit.exe` Emulation
 
-6. [ ] Implement Bubble Tea model with top menu bar, main text area, and bottom status bar (Plan: P3; Reqs: R1, R4, R6, R16)
-7. [ ] Implement pseudo-graphics borders and box-drawing for `edit.exe`-style layout (Plan: P3; Reqs: R4, R6)
-8. [ ] Handle terminal resize messages and recompute layout and wrapping (Plan: P3; Reqs: R6, R16)
-9. [ ] Implement classic `edit.exe` color palette in a theme module (Plan: P4; Reqs: R4, R6)
-10. [ ] Implement color fallback paths for limited terminals (Plan: P4; Reqs: R4, R16)
-11. [ ] Expose minimal theme overrides via configuration hooks (Plan: P4; Reqs: R14, R16)
-12. [ ] Map `edit.exe`-style keybindings (Alt+menu, arrows, PgUp/PgDn, Home/End, F-keys) to internal commands (Plan: P5; Reqs: R1, R3, R5, R11, R12, R13, R17)
-13. [ ] Implement menu bar navigation and activation (Plan: P5; Reqs: R3, R5, R11, R12, R13, R17)
-14. [ ] Wire menu items and keybindings for Open, Exit, Help, Find, TOC, bookmarks, and recent files (Plan: P5; Reqs: R1, R3, R5, R11, R12, R13, R17)
+6. [x] Implement Bubble Tea model with top menu bar, main text area, and bottom status bar (Plan: P3; Reqs: R1, R4, R6, R16)
+7. [x] Implement pseudo-graphics borders and box-drawing for `edit.exe`-style layout (Plan: P3; Reqs: R4, R6)
+8. [x] Handle terminal resize messages and recompute layout and wrapping (Plan: P3; Reqs: R6, R16)
+9. [x] Implement classic `edit.exe` color palette in a theme module (Plan: P4; Reqs: R4, R6)
+10. [x] Implement color fallback paths for limited terminals (Plan: P4; Reqs: R4, R16)
+11. [x] Expose minimal theme overrides via configuration hooks (Plan: P4; Reqs: R14, R16)
+12. [x] Map `edit.exe`-style keybindings (Alt+menu, arrows, PgUp/PgDn, Home/End, F-keys) to internal commands (Plan: P5; Reqs: R1, R3, R5, R11, R12, R13, R17)
+13. [x] Implement menu bar navigation and activation (Plan: P5; Reqs: R3, R5, R11, R12, R13, R17)
+14. [x] Wire menu items and keybindings for Open, Exit, Help, Find, TOC, bookmarks, and recent files (Plan: P5; Reqs: R1, R3, R5, R11, R12, R13, R17)
 
 ## Phase 3 – Format Support and Unified Reader
 
